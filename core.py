@@ -5,6 +5,7 @@ import functools
 import io
 import os
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import aiofiles
 import aiofiles.os
@@ -25,6 +26,8 @@ from errors import (
     ExceedsFileSizeLimit,
     FileNameExists,
     NotFound,
+    NotImplement,
+    Unauthorized,
 )
 from helpers import (
     blocklist_24_failed,
@@ -170,7 +173,7 @@ async def initialize() -> None:
     logger.info(f"write db: {write_db}")
 
 
-async def pre_process_identifier(identifier) -> (str | None, str | None):
+async def pre_process_identifier(identifier) -> tuple[str | None, str | None]:
     did_identifier = None
     handle_identifier = None
 
@@ -262,15 +265,10 @@ def api_key_required(key_type) -> callable:
                     logger.warning(f"<< {ip}: given key:{provided_api_key} Unauthorized API access.")
                     session["authenticated"] = False
 
-                    return (
-                        "Unauthorized",
-                        401,
-                    )  # Return an error response if the API key is not valid
+                    raise Unauthorized("Unauthorized")
             except AttributeError:
                 logger.error(f"API key not found for type: {key_type}")
-                session["authenticated"] = False
-
-                return "Unauthorized", 401
+                raise Unauthorized("Unauthorized")
             else:
                 logger.info(f"Valid key {provided_api_key} for type: {key_type}")
 
@@ -285,7 +283,7 @@ def api_key_required(key_type) -> callable:
 
 # ======================================================================================================================
 # ============================================ API Services Functions ==================================================
-async def get_blocklist(client_identifier, page):
+async def get_blocklist(client_identifier: str, page: int) -> dict[str, Any]:
     session_ip = await get_ip()
     api_key = request.headers.get("X-API-Key")
 
@@ -293,43 +291,40 @@ async def get_blocklist(client_identifier, page):
 
     logger.info(f"<< {session_ip} - {api_key} - blocklist request: {identifier}")
 
-    if identifier:
-        did_identifier, handle_identifier = await pre_process_identifier(identifier)
-        status = await preprocess_status(did_identifier)
+    try:
+        if identifier:
+            did_identifier, handle_identifier = await pre_process_identifier(identifier)
+            status = await preprocess_status(did_identifier)
 
-        if did_identifier and handle_identifier and status:
-            items_per_page = 100
-            offset = (page - 1) * items_per_page
+            if did_identifier and handle_identifier and status:
+                items_per_page = 100
+                offset = (page - 1) * items_per_page
 
-            blocklist, count, pages = await utils.process_user_block_list(
-                did_identifier, limit=items_per_page, offset=offset
-            )
-            formatted_count = f"{count:,}"
+                blocklist, count, pages = await utils.process_user_block_list(
+                    did_identifier, limit=items_per_page, offset=offset
+                )
+                formatted_count = f"{count:,}"
 
-            blocklist_data = {
-                "blocklist": blocklist,
-                "count": formatted_count,
-                "pages": pages,
-            }
+                blocklist_data = {
+                    "blocklist": blocklist,
+                    "count": formatted_count,
+                    "pages": pages,
+                }
+            else:
+                blocklist = None
+                count = 0
+
+                blocklist_data = {"blocklist": blocklist, "count": count}
         else:
-            blocklist = None
-            count = 0
+            identifier = "Missing parameter"
+            raise BadRequest(identifier, identifier)
+    finally:
+        logger.info(f">> {session_ip} - {api_key} - blocklist result returned: {identifier}")
 
-            blocklist_data = {"blocklist": blocklist, "count": count}
-
-        data = {"identity": identifier, "status": status, "data": blocklist_data}
-    else:
-        identifier = "Missing parameter"
-        result = "Missing parameter"
-        block_data = {"error": result}
-        data = {"data": block_data}
-
-    logger.info(f">> {session_ip} - {api_key} - blocklist result returned: {identifier}")
-
-    return jsonify(data)
+    return blocklist_data
 
 
-async def get_single_blocklist(client_identifier, page):
+async def get_single_blocklist(client_identifier: str, page: int) -> tuple[str, bool, dict[str, Any]]:
     session_ip = await get_ip()
     api_key = request.headers.get("X-API-Key")
 
@@ -337,43 +332,40 @@ async def get_single_blocklist(client_identifier, page):
 
     logger.info(f"<< {session_ip} - {api_key} - single blocklist request: {identifier}")
 
-    if identifier:
-        did_identifier, handle_identifier = await pre_process_identifier(identifier)
-        status = await preprocess_status(did_identifier)
+    try:
+        if identifier:
+            did_identifier, handle_identifier = await pre_process_identifier(identifier)
+            status = await preprocess_status(did_identifier)
 
-        if did_identifier and handle_identifier and status:
-            items_per_page = 100
-            offset = (page - 1) * items_per_page
+            if did_identifier and handle_identifier and status:
+                items_per_page = 100
+                offset = (page - 1) * items_per_page
 
-            blocklist, count, pages = await database_handler.get_single_user_blocks(
-                did_identifier, limit=items_per_page, offset=offset
-            )
-            formatted_count = f"{count:,}"
+                blocklist, count, pages = await database_handler.get_single_user_blocks(
+                    did_identifier, limit=items_per_page, offset=offset
+                )
+                formatted_count = f"{count:,}"
 
-            blocklist_data = {
-                "blocklist": blocklist,
-                "count": formatted_count,
-                "pages": pages,
-            }
+                blocklist_data = {
+                    "blocklist": blocklist,
+                    "count": formatted_count,
+                    "pages": pages,
+                }
+            else:
+                blocklist_data = None
+                count = 0
+
+                blocklist_data = {"blocklist": blocklist_data, "count": count}
+
+            return identifier, status, blocklist_data
         else:
-            blocklist_data = None
-            count = 0
-
-            blocklist_data = {"blocklist": blocklist_data, "count": count}
-
-        data = {"identity": identifier, "status": status, "data": blocklist_data}
-    else:
-        identifier = "Missing parameter"
-        result = "Missing parameter"
-        block_data = {"error": result}
-        data = {"data": block_data}
-
-    logger.info(f">> {session_ip} - {api_key} - single blocklist result returned: {identifier}")
-
-    return jsonify(data)
+            identifier = "Missing parameter"
+            raise BadRequest(identifier, identifier)
+    finally:
+        logger.info(f">> {session_ip} - {api_key} - single blocklist result returned: {identifier}")
 
 
-async def get_in_common_blocklist(client_identifier):
+async def get_in_common_blocklist(client_identifier: str) -> tuple[str, dict[str, Any]]:
     session_ip = await get_ip()
     api_key = request.headers.get("X-API-Key")
 
@@ -381,31 +373,27 @@ async def get_in_common_blocklist(client_identifier):
 
     logger.info(f"<< {session_ip} - {api_key} - in-common blocklist request: {identifier}")
 
-    if identifier:
-        did_identifier, handle_identifier = await pre_process_identifier(identifier)
-        status = await preprocess_status(did_identifier)
+    try:
+        if identifier:
+            did_identifier, handle_identifier = await pre_process_identifier(identifier)
+            status = await preprocess_status(did_identifier)
 
-        if did_identifier and handle_identifier and status:
-            blocklist_data = await database_handler.get_similar_users(did_identifier)
+            if did_identifier and handle_identifier and status:
+                blocklist_data = await database_handler.get_similar_users(did_identifier)
+            else:
+                blocklist_data = None
+
+            common_list = {"inCommonList": blocklist_data}
+
+            return identifier, common_list
         else:
-            blocklist_data = None
-
-        common_list = {"inCommonList": blocklist_data}
-
-        data = {"identity": identifier, "data": common_list}
-    else:
-        identifier = "Missing parameter"
-        result = "Missing parameter"
-        block_data = {"error": result}
-        data = {"data": block_data}
-
-    logger.info(f">> {session_ip} - {api_key} - in-common blocklist result returned: {identifier}")
-
-    return jsonify(data)
+            identifier = "Missing parameter"
+            raise BadRequest(identifier, identifier)
+    finally:
+        logger.info(f">> {session_ip} - {api_key} - in-common blocklist result returned: {identifier}")
 
 
-async def get_in_common_blocked(client_identifier):
-    not_implemented = True
+async def get_in_common_blocked(client_identifier: str) -> tuple[str, dict[str, Any]]:
     common_list = None
 
     session_ip = await get_ip()
@@ -414,12 +402,13 @@ async def get_in_common_blocked(client_identifier):
     identifier = await sanitization(client_identifier)
 
     logger.info(f"<< {session_ip} - {api_key} - in-common blocked request: {identifier}")
+    raise NotImplement()
 
-    if identifier:
-        did_identifier, handle_identifier = await pre_process_identifier(identifier)
-        status = await preprocess_status(did_identifier)
+    try:
+        if identifier:
+            did_identifier, handle_identifier = await pre_process_identifier(identifier)
+            status = await preprocess_status(did_identifier)
 
-        if not not_implemented:
             if did_identifier and handle_identifier and status:
                 blocklist_data = await database_handler.get_similar_blocked_by(did_identifier)
                 # formatted_count = '{:,}'.format(count)
@@ -429,19 +418,15 @@ async def get_in_common_blocked(client_identifier):
 
             common_list = {"inCommonList": blocklist_data}
 
-        data = {"error": "API not Implemented."} if not_implemented else {"identity": identifier, "data": common_list}
-    else:
-        identifier = "Missing parameter"
-        result = "Missing parameter"
-        block_data = {"error": result}
-        data = {"data": block_data}
-
-    logger.info(f">> {session_ip} - {api_key} - in-common blocked result returned: {identifier}")
-
-    return jsonify(data)
+            return identifier, common_list
+        else:
+            identifier = "Missing parameter"
+            raise BadRequest(identifier, identifier)
+    finally:
+        logger.info(f">> {session_ip} - {api_key} - in-common blocked result returned: {identifier}")
 
 
-async def convert_uri_to_url(uri):
+async def convert_uri_to_url(uri: str) -> dict[str, Any]:
     session_ip = await get_ip()
     api_key = request.headers.get("X-API-Key")
 
@@ -449,17 +434,15 @@ async def convert_uri_to_url(uri):
 
     logger.info(f"<< {session_ip} - {api_key} - get at-uri conversion request: {uri}")
 
-    if url:
-        url_data = {"url": url}
-        data = {"data": url_data}
-    else:
-        result = "Malformed parameter"
-        url_data = {"error": result}
-        data = {"data": url_data}
-
-    logger.info(f">> {session_ip} - {api_key} - at-uri conversion result returned: {uri}")
-
-    return jsonify(data)
+    try:
+        if url:
+            url_data = {"url": url}
+            return url_data
+        else:
+            result = "Malformed parameter"
+            return BadRequest(result, result)
+    finally:
+        logger.info(f">> {session_ip} - {api_key} - at-uri conversion result returned: {uri}")
 
 
 async def get_total_users():
@@ -536,7 +519,7 @@ async def get_total_users():
     return jsonify(data)
 
 
-async def get_did_info(client_identifier):
+async def get_did_info(client_identifier: str) -> dict[str, Any] | None:
     session_ip = await get_ip()
     api_key = request.headers.get("X-API-Key")
 
@@ -544,38 +527,35 @@ async def get_did_info(client_identifier):
 
     logger.info(f"<< {session_ip} - {api_key} - get did request: {identifier}")
 
-    if identifier:
-        did_identifier, handle_identifier = await pre_process_identifier(identifier)
-        status = await preprocess_status(did_identifier)
+    try:
+        if identifier:
+            did_identifier, handle_identifier = await pre_process_identifier(identifier)
+            status = await preprocess_status(did_identifier)
 
-        if did_identifier and handle_identifier and status:
-            pds = await on_wire.get_pds(did_identifier)
+            if did_identifier and handle_identifier and status:
+                pds = await on_wire.get_pds(did_identifier)
 
-            avatar_id = await on_wire.get_avatar_id(did_identifier)
+                avatar_id = await on_wire.get_avatar_id(did_identifier)
 
-            did_data = {
-                "identifier": identifier,
-                "did_identifier": did_identifier,
-                "user_url": f"https://bsky.app/profile/{did_identifier}",
-                "avatar_url": f"https://cdn.bsky.app/img/avatar/plain/{did_identifier}/{avatar_id}",
-                "pds": pds,
-            }
+                did_data = {
+                    "identifier": identifier,
+                    "did_identifier": did_identifier,
+                    "user_url": f"https://bsky.app/profile/{did_identifier}",
+                    "avatar_url": f"https://cdn.bsky.app/img/avatar/plain/{did_identifier}/{avatar_id}",
+                    "pds": pds,
+                }
+            else:
+                did_data = None
+
+            return did_data
         else:
-            did_data = None
-
-        data = {"data": did_data}
-    else:
-        identifier = "Missing parameter"
-        result = "Missing parameter"
-        block_data = {"error": result}
-        data = {"data": block_data}
-
-    logger.info(f">> {session_ip} - {api_key} - did result returned: {identifier}")
-
-    return jsonify(data)
+            identifier = "Missing parameter"
+            raise BadRequest(identifier, identifier)
+    finally:
+        logger.info(f">> {session_ip} - {api_key} - did result returned: {identifier}")
 
 
-async def get_handle_info(client_identifier) -> jsonify:
+async def get_handle_info(client_identifier: str) -> dict[str, Any] | None:
     session_ip = await get_ip()
     api_key = request.headers.get("X-API-Key")
 
@@ -583,35 +563,32 @@ async def get_handle_info(client_identifier) -> jsonify:
 
     logger.info(f"<< {session_ip} - {api_key} - get handle request: {identifier}")
 
-    if identifier:
-        did_identifier, handle_identifier = await pre_process_identifier(identifier)
-        status = await preprocess_status(did_identifier)
+    try:
+        if identifier:
+            did_identifier, handle_identifier = await pre_process_identifier(identifier)
+            status = await preprocess_status(did_identifier)
 
-        if did_identifier and handle_identifier and status:
-            pds = await on_wire.get_pds(did_identifier)
+            if did_identifier and handle_identifier and status:
+                pds = await on_wire.get_pds(did_identifier)
 
-            avatar_id = await on_wire.get_avatar_id(did_identifier)
+                avatar_id = await on_wire.get_avatar_id(did_identifier)
 
-            handle_data = {
-                "identifier": identifier,
-                "handle_identifier": handle_identifier,
-                "user_url": f"https://bsky.app/profile/{did_identifier}",
-                "avatar_url": f"https://cdn.bsky.app/img/avatar/plain/{did_identifier}/{avatar_id}",
-                "pds": pds,
-            }
+                handle_data = {
+                    "identifier": identifier,
+                    "handle_identifier": handle_identifier,
+                    "user_url": f"https://bsky.app/profile/{did_identifier}",
+                    "avatar_url": f"https://cdn.bsky.app/img/avatar/plain/{did_identifier}/{avatar_id}",
+                    "pds": pds,
+                }
+            else:
+                handle_data = None
+
+            return handle_data
         else:
-            handle_data = None
-
-        data = {"data": handle_data}
-    else:
-        identifier = "Missing parameter"
-        result = "Missing parameter"
-        block_data = {"error": result}
-        data = {"data": block_data}
-
-    logger.info(f">> {session_ip} - {api_key} - handle result returned: {identifier}")
-
-    return jsonify(data)
+            identifier = "Missing parameter"
+            raise BadRequest(identifier, identifier)
+    finally:
+        logger.info(f">> {session_ip} - {api_key} - handle result returned: {identifier}")
 
 
 async def get_handle_history_info(client_identifier) -> jsonify:

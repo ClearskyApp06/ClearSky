@@ -1,13 +1,18 @@
 # api_test.py
 
-import asyncio
+from typing import Any
 
 import aiohttp
-import requests
+import pytest
+from quart_rate_limiter import RateLimitExceeded
 
+import apis
+import errors
+from app import app
 from config_helper import logger
 
 
+@pytest.mark.asyncio
 async def test_push():
     api_key = "CLEARSKYtestJIWIR903Jjksrerkoti4"
     push_server = "https://ui.staging.clearsky.app"
@@ -677,170 +682,191 @@ async def test_push():
         logger.error("PUSH not executed, no API key configured.")
 
 
-async def main():
-    def auth():
-        # api_key = "CLEARSKYtestd121ascmkdneaorSDno32"
-        api_key = "CLEARSKYprodtest67890asdfghjklqw"
+@pytest.mark.asyncio
+async def test_auth_api_v1():
+    # api_key = "CLEARSKYtestd121ascmkdneaorSDno32"
+    api_key = "CLEARSKYprodtest67890asdfghjklqw"
+    test_client = app.test_client()
 
-        # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/base/internal/status/process-status"
-        # api_endpoint = "http://localhost/api/v1/base/internal/status/process-status"
-        # api_endpoint = "http://staging.bsky.thieflord.dev/api/v1/blocklist-search-blocking/test.tennis.thieflord.dev"
-        # api_endpoint = "http://localhost/api/v1/lists/block-stats"
-        # api_endpoint = "http://api.staging.clearsky.services/api/v1/anon/lists/fun-facts"
-        # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/blocklist-search-blocking/test.tennis.thieflord.dev/alechiaval.bsky.social"
-        # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/lists/block-stats"
-        # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/blocklist/boykisser.expert"
-        # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/single-blocklist/thieflord.dev"
-        # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/total-users"
-        # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/get-did/thieflord.dev"
-        # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/get-handle/thieflford.dev"
-        # api_endpoint = "https://api.staging.clearsky.services/api/v1/get-handle-history/thieflord.dev"
-        # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/blocklist-search-blocking/desir.ee/thieflord.dev"
-        # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/in-common-blocklist/"
-        # api_endpoint = "http://localhost/api/v1/blocklist-search-blocking/desir.ee/thieflord.dev"
-        # api_endpoint = "http://localhost/api/v1/blocklist-search-blocked/thieflord.dev/desir.ee"
-        # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/total-users"
-        # api_endpoint = "http://localhost/api/v1/single-blocklist/thieflord.dev"
-        # api_endpoint = "http://localhost/api/v1/at-uri/at://did:plc:smcanwhzsj5dqp4yew7y6ybx/app.bsky.graph.listblock/3kf2kfcic5od2u"
-        # api_endpoint = "http://localhost/api/v1/get-moderation-list/gaminsdfvf"
-        # api_endpoint = "http://localhost/api/v1/auth/blocklist/rudyfraser.com"
-        # api_endpoint = "http://localhost/api/v1/auth/base/internal/api-check?key_type="
-        # api_endpoint = "http://localhost/api/v1/base/internal/status/process-status"
-        api_endpoint = "https://clearsky.app/api/v1/base/internal/status/process-status"
+    # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/base/internal/status/process-status"
+    # api_endpoint = "http://localhost/api/v1/base/internal/status/process-status"
+    # api_endpoint = "http://staging.bsky.thieflord.dev/api/v1/blocklist-search-blocking/test.tennis.thieflord.dev"
+    # api_endpoint = "http://localhost/api/v1/lists/block-stats"
+    # api_endpoint = "http://api.staging.clearsky.services/api/v1/anon/lists/fun-facts"
+    # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/blocklist-search-blocking/test.tennis.thieflord.dev/alechiaval.bsky.social"
+    # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/lists/block-stats"
+    # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/blocklist/boykisser.expert"
+    # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/single-blocklist/thieflord.dev"
+    # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/total-users"
+    # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/get-did/thieflord.dev"
+    # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/get-handle/thieflford.dev"
+    # api_endpoint = "https://api.staging.clearsky.services/api/v1/get-handle-history/thieflord.dev"
+    # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/blocklist-search-blocking/desir.ee/thieflord.dev"
+    # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/in-common-blocklist/"
+    # api_endpoint = "http://localhost/api/v1/blocklist-search-blocking/desir.ee/thieflord.dev"
+    # api_endpoint = "http://localhost/api/v1/blocklist-search-blocked/thieflord.dev/desir.ee"
+    # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/total-users"
+    # api_endpoint = "http://localhost/api/v1/single-blocklist/thieflord.dev"
+    # api_endpoint = "http://localhost/api/v1/at-uri/at://did:plc:smcanwhzsj5dqp4yew7y6ybx/app.bsky.graph.listblock/3kf2kfcic5od2u"
+    # api_endpoint = "http://localhost/api/v1/get-moderation-list/gaminsdfvf"
+    # api_endpoint = "http://localhost/api/v1/auth/blocklist/rudyfraser.com"
+    # api_endpoint = "http://localhost/api/v1/auth/base/internal/api-check?key_type="
+    # api_endpoint = "http://localhost/api/v1/base/internal/status/process-status"
+    api_endpoint = "/api/v1/base/internal/status/process-status"
 
-        # Define the headers with the API key
-        headers = {"X-API-Key": f"{api_key}"}
+    # Define the headers with the API key
+    headers = {"X-API-Key": f"{api_key}"}
 
-        try:
-            # Send an OPTIONS request to the API endpoint with the headers
-            options_response = requests.options(api_endpoint, headers=headers)
+    # Send an OPTIONS request to the API endpoint with the headers
+    options_response = await test_client.options(api_endpoint, headers=headers)
 
-            for key, value in options_response.headers.items():
-                logger.info(f"Header: {key} = {value}")
+    for key, value in options_response.headers.items():
+        logger.info(f"Header: {key} = {value}")
 
-            # Send a GET request to the API endpoint with the headers
-            response = requests.get(api_endpoint, headers=headers)
+    # Send a GET request to the API endpoint with the headers
+    response = await test_client.get(api_endpoint, headers=headers)
 
-            # Print the response headers
-            for key, value in response.headers.items():
-                logger.info(f"Header: {key} = {value}")
+    # Print the response headers
+    for key, value in response.headers.items():
+        logger.info(f"Header: {key} = {value}")
 
-            # Check if the 'Access-Control-Allow-Origin' header is present
-            if "Access-Control-Allow-Origin" in response.headers:
-                # Print the allowed origin(s)
-                logger.info(f"Access-Control-Allow-Origin: {response.headers['Access-Control-Allow-Origin']}")
+    # Check if the 'Access-Control-Allow-Origin' header is present
+    if "Access-Control-Allow-Origin" in response.headers:
+        # Print the allowed origin(s)
+        logger.info(f"Access-Control-Allow-Origin: {response.headers['Access-Control-Allow-Origin']}")
 
-                # Check if it allows the origin of your request
-                if response.headers["Access-Control-Allow-Origin"] == "*":
-                    logger.info("CORS is configured to allow all origins.")
-                else:
-                    logger.info("CORS is configured to allow specific origins.")
-            else:
-                logger.info("Access-Control-Allow-Origin header not found. CORS might not be configured.")
-
-            # Check if the request was successful (status code 200)
-            if response.status_code == 200:
-                # Print the response content
-                logger.info(response.text)
-            else:
-                logger.info(f"Request failed with status code {response.status_code}")
-        except requests.exceptions.RequestException as e:
-            logger.info(f"Error: {e}")
-
-    def anon():
-        # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/base/internal/status/process-status"
-        # api_endpoint = "https://api.clearsky.services/api/v1/anon/base/internal/status/process-status"
-        # api_endpoint = "http://staging.bsky.thieflord.dev/api/v1/blocklist-search-blocking/test.tennis.thieflord.dev"
-        # api_endpoint = "http://localhost/api/v1/lists/block-stats"
-        # api_endpoint = "https://api.staging.clearsky.services/api/v1/anon/lists/fun-facts"
-        # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/blocklist-search-blocking/test.tennis.thieflord.dev/alechiaval.bsky.social"
-        # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/lists/block-stats"
-        # api_endpoint = "http://localhost/api/v1/anon/blocklist/did:plc:g6siaz6zgxndohrxdeg6a2bd"
-        # api_endpoint = "https://api.staging.clearsky.services/api/v1/anon/single-blocklist/did:plc:yk4dd2qkboz2yv6tpubpc6co"
-        # api_endpoint = "https://api.clearsky.services/api/v1/anon/single-blocklist/mapconsuela.bsky.social"
-        # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/anon/total-users"
-        # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/get-did/thieflord.dev"
-        # api_endpoint = "https://api.clearsky.services/api/v1/anon/get-handle/thieflord.dev"
-        # api_endpoint = "https://api.staging.clearsky.services/api/v1/anon/get-handle-history/genco.me"
-        # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/blocklist-search-blocking/desir.ee/thieflord.dev"
-        # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/in-common-blocklist/"
-        # api_endpoint = "http://localhost/api/v1/blocklist-search-blocking/desir.ee/thieflord.dev"
-        # api_endpoint = "http://localhost/api/v1/anon/blocklist-search-blocked/thieflord.dev/desir.ee"
-        # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/total-users"
-        # api_endpoint = "http://localhost/api/v1/anon/single-blocklist/thieflord.dev"
-        api_endpoint = "http://localhost/api/v1/anon/single-blocklist/dollyeldritch.bsky.social"
-        # api_endpoint = "http://localhost/api/v1/anon/blocklist/thieflord.dev"
-        # api_endpoint = "http://localhost/api/v1/at-uri/at://did:plc:smcanwhzsj5dqp4yew7y6ybx/app.bsky.graph.listblock/3kf2kfcic5od2u"
-        # api_endpoint = "http://localhost/api/v1/get-moderation-list/gaminsdfvf"
-        # api_endpoint = "http://localhost/api/v1/anon/blocklist/kinewtesting2.bsky.social"
-        # api_endpoint = "https://api.clearsky.services/api/v1/anon/blocklist/kinewtesting2.bsky.social"
-        # api_endpoint = "http://localhost/api/v1/anon/lists/dids-per-pds"
-        # api_endpoint = "http://localhost/api/v1/anon/subscribe-blocks-blocklist/smolbeansprout.bsky.social"
-        # api_endpoint = "http://localhost/api/v1/anon/subscribe-blocks-single-blocklist/krkr2019.bsky.social"
-        # api_endpoint = "http://localhost/api/v1/anon/subscribe-blocks-blocklist/did:plc:gi33pbqny4kxmhz2da3gxkax"
-        # api_endpoint = "https://api.clearsky.services/api/v1/anon/total-users"
-        # api_endpoint = "https://api.clearsky.services/api/v1/anon/lists/fun-facts"
-        # api_endpoint = "https://api.clearsky.services/api/v1/anon/lists/funer-facts"
-        # api_endpoint = "https://api.clearsky.services/api/v1/anon/lists/block-stats"
-        # api_endpoint = "https://api.clearsky.services/api/v1/anon/base/autocomplete/thi"
-        # api_endpoint = "https://api.clearsky.services/api/v1/anon/at-uri/at://did:plc:synka4gchwjmophklcsndndf/app.bsky.feed.post/3klnptzxy3b2f"
-        # api_endpoint = "https://api.staging.clearsky.services/api/v1/anon/data-transaction/query"
-        # api_endpoint = "https://api.clearsky.services/api/v1/anon/validation/validate-handle/drbonnieanderson.bsky.social"
-        # api_endpoint = "https://clearsky.app/api/v1/base/internal/status/process-status"
-        # api_endpoint = "https://api.clearsky.services/api/v1/anon/total-users"
-        # api_endpoint = "https://api.clearsky.services/api/v1/anon/lists/fun-facts"
-        # api_endpoint = "https://api.clearsky.services/api/v1/anon/cursor-recall/status"
-        # api_endpoint = "https://api.clearsky.services/api/v1/anon/status/time-behind"
-
-        try:
-            logger.info(f"API endpoint: {api_endpoint}")
-            # Send an OPTIONS request to the API endpoint with the headers
-            options_response = requests.options(api_endpoint)
-
-            for key, value in options_response.headers.items():
-                logger.info(f"Header: {key} = {value}")
-
-            # Send a GET request to the API endpoint with the headers
-            response = requests.get(api_endpoint)
-
-            # Print the response headers
-            for key, value in response.headers.items():
-                logger.info(f"Header: {key} = {value}")
-
-            # Check if the 'Access-Control-Allow-Origin' header is present
-            if "Access-Control-Allow-Origin" in response.headers:
-                # Print the allowed origin(s)
-                logger.info(f"Access-Control-Allow-Origin: {response.headers['Access-Control-Allow-Origin']}")
-
-                # Check if it allows the origin of your request
-                if response.headers["Access-Control-Allow-Origin"] == "*":
-                    logger.info("CORS is configured to allow all origins.")
-                else:
-                    logger.info("CORS is configured to allow specific origins.")
-            else:
-                logger.info("Access-Control-Allow-Origin header not found. CORS might not be configured.")
-
-            # Check if the request was successful (status code 200)
-            if response.status_code == 200:
-                # Print the response content
-                logger.info(response.text)
-            else:
-                logger.info(f"Request failed with status code {response.status_code}")
-        except requests.exceptions.RequestException as e:
-            logger.info(f"Error: {e}")
-
-    selection = input("select auth, anon, or push: ")
-
-    if selection == "auth":
-        auth()
-    elif selection == "anon":
-        anon()
-    elif selection == "push":
-        await test_push()
+        # Check if it allows the origin of your request
+        if response.headers["Access-Control-Allow-Origin"] == "*":
+            logger.info("CORS is configured to allow all origins.")
+        else:
+            logger.info("CORS is configured to allow specific origins.")
     else:
-        logger.info("Invalid selection.")
-        await main()
+        logger.info("Access-Control-Allow-Origin header not found. CORS might not be configured.")
+
+    # Check if the request was successful (status code 200)
+    if response.status_code == 200:
+        # Print the response content
+        logger.info(response.text)
+    else:
+        logger.info(f"Request failed with status code {response.status_code}")
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+@pytest.mark.asyncio
+async def test_anon_api_v1():
+    test_client = app.test_client()
+    # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/base/internal/status/process-status"
+    # api_endpoint = "https://api.clearsky.services/api/v1/anon/base/internal/status/process-status"
+    # api_endpoint = "http://staging.bsky.thieflord.dev/api/v1/blocklist-search-blocking/test.tennis.thieflord.dev"
+    # api_endpoint = "http://localhost/api/v1/lists/block-stats"
+    # api_endpoint = "https://api.staging.clearsky.services/api/v1/anon/lists/fun-facts"
+    # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/blocklist-search-blocking/test.tennis.thieflord.dev/alechiaval.bsky.social"
+    # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/lists/block-stats"
+    # api_endpoint = "http://localhost/api/v1/anon/blocklist/did:plc:g6siaz6zgxndohrxdeg6a2bd"
+    # api_endpoint = "https://api.staging.clearsky.services/api/v1/anon/single-blocklist/did:plc:yk4dd2qkboz2yv6tpubpc6co"
+    # api_endpoint = "https://api.clearsky.services/api/v1/anon/single-blocklist/mapconsuela.bsky.social"
+    # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/anon/total-users"
+    # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/get-did/thieflord.dev"
+    # api_endpoint = "https://api.clearsky.services/api/v1/anon/get-handle/thieflord.dev"
+    # api_endpoint = "https://api.staging.clearsky.services/api/v1/anon/get-handle-history/genco.me"
+    # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/blocklist-search-blocking/desir.ee/thieflord.dev"
+    # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/in-common-blocklist/"
+    # api_endpoint = "http://localhost/api/v1/blocklist-search-blocking/desir.ee/thieflord.dev"
+    # api_endpoint = "http://localhost/api/v1/anon/blocklist-search-blocked/thieflord.dev/desir.ee"
+    # api_endpoint = "https://staging.bsky.thieflord.dev/api/v1/total-users"
+    # api_endpoint = "http://localhost/api/v1/anon/single-blocklist/thieflord.dev"
+    api_endpoint = "/api/v1/anon/single-blocklist/dollyeldritch.bsky.social"
+    # api_endpoint = "http://localhost/api/v1/anon/blocklist/thieflord.dev"
+    # api_endpoint = "http://localhost/api/v1/at-uri/at://did:plc:smcanwhzsj5dqp4yew7y6ybx/app.bsky.graph.listblock/3kf2kfcic5od2u"
+    # api_endpoint = "http://localhost/api/v1/get-moderation-list/gaminsdfvf"
+    # api_endpoint = "http://localhost/api/v1/anon/blocklist/kinewtesting2.bsky.social"
+    # api_endpoint = "https://api.clearsky.services/api/v1/anon/blocklist/kinewtesting2.bsky.social"
+    # api_endpoint = "http://localhost/api/v1/anon/lists/dids-per-pds"
+    # api_endpoint = "http://localhost/api/v1/anon/subscribe-blocks-blocklist/smolbeansprout.bsky.social"
+    # api_endpoint = "http://localhost/api/v1/anon/subscribe-blocks-single-blocklist/krkr2019.bsky.social"
+    # api_endpoint = "http://localhost/api/v1/anon/subscribe-blocks-blocklist/did:plc:gi33pbqny4kxmhz2da3gxkax"
+    # api_endpoint = "https://api.clearsky.services/api/v1/anon/total-users"
+    # api_endpoint = "https://api.clearsky.services/api/v1/anon/lists/fun-facts"
+    # api_endpoint = "https://api.clearsky.services/api/v1/anon/lists/funer-facts"
+    # api_endpoint = "https://api.clearsky.services/api/v1/anon/lists/block-stats"
+    # api_endpoint = "https://api.clearsky.services/api/v1/anon/base/autocomplete/thi"
+    # api_endpoint = "https://api.clearsky.services/api/v1/anon/at-uri/at://did:plc:synka4gchwjmophklcsndndf/app.bsky.feed.post/3klnptzxy3b2f"
+    # api_endpoint = "https://api.staging.clearsky.services/api/v1/anon/data-transaction/query"
+    # api_endpoint = "https://api.clearsky.services/api/v1/anon/validation/validate-handle/drbonnieanderson.bsky.social"
+    # api_endpoint = "https://clearsky.app/api/v1/base/internal/status/process-status"
+    # api_endpoint = "https://api.clearsky.services/api/v1/anon/total-users"
+    # api_endpoint = "https://api.clearsky.services/api/v1/anon/lists/fun-facts"
+    # api_endpoint = "https://api.clearsky.services/api/v1/anon/cursor-recall/status"
+    # api_endpoint = "https://api.clearsky.services/api/v1/anon/status/time-behind"
+
+    logger.info(f"API endpoint: {api_endpoint}")
+    # Send an OPTIONS request to the API endpoint with the headers
+    options_response = await test_client.options(api_endpoint)
+
+    for key, value in options_response.headers.items():
+        logger.info(f"Header: {key} = {value}")
+
+    # Send a GET request to the API endpoint with the headers
+    response = await test_client.get(api_endpoint)
+
+    # Print the response headers
+    for key, value in response.headers.items():
+        logger.info(f"Header: {key} = {value}")
+
+    # Check if the 'Access-Control-Allow-Origin' header is present
+    if "Access-Control-Allow-Origin" in response.headers:
+        # Print the allowed origin(s)
+        logger.info(f"Access-Control-Allow-Origin: {response.headers['Access-Control-Allow-Origin']}")
+
+        # Check if it allows the origin of your request
+        if response.headers["Access-Control-Allow-Origin"] == "*":
+            logger.info("CORS is configured to allow all origins.")
+        else:
+            logger.info("CORS is configured to allow specific origins.")
+    else:
+        logger.info("Access-Control-Allow-Origin header not found. CORS might not be configured.")
+
+    # Check if the request was successful (status code 200)
+    if response.status_code == 200:
+        # Print the response content
+        logger.info(response.text)
+    else:
+        logger.info(f"Request failed with status code {response.status_code}")
+
+
+@pytest.mark.parametrize(
+    "exc_class,exc_args,expected_status,expected_message",
+    [
+        (e, (), e.status_code, e.default_message)
+        for e in [
+            errors.BadRequest,
+            errors.Unauthorized,
+            errors.NotFound,
+            errors.DatabaseConnectionError,
+            errors.NoFileProvided,
+            errors.FileNameExists,
+            errors.ExceedsFileSizeLimit,
+            errors.InternalServerError,
+            errors.NotImplement,
+        ]
+    ]
+    + [(ValueError, (), 500, "Internal server error"), (RateLimitExceeded, (60,), 429, "Rate limit exceeded")],
+)
+@pytest.mark.asyncio
+async def test_error_handler(
+    exc_class: type[Exception], exc_args: tuple[Any, ...], expected_status: int, expected_message: str
+) -> None:
+    url_path = "/test-error-handler/"
+
+    @app.route(url_path)
+    @apis.handle_errors
+    async def test_error_fn():
+        raise exc_class(*exc_args)
+
+    test_client = app.test_client()
+    response = await test_client.get(url_path)
+    assert response.status_code == expected_status
+    response_body = await response.json
+    assert response_body["error"]["data"] == expected_message
+
+    app.url_map._rules_by_endpoint.pop("test_error_fn", None)
+    app.view_functions.pop("test_error_fn", None)

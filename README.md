@@ -4,12 +4,11 @@ This Application provides information from Bluesky using ATProto.
 
 ## Table of contents
 
-- [Installation](#installation)
-- [Usage](#usage)
-- [Codespaces](#codespaces)
+- [Developer environment setup](#setup)
+- [Development processes](#development)
 - [Deployment](#deployment)
 
-## Installation
+## Setup
 
 Optional tooling to ease life:
 
@@ -32,6 +31,11 @@ If you're setting things up by hand or without the above tooling:
 3. Run: `pip install -r requirements.txt -r requirements-dev.txt`
 4. Run: `pre-commit install`
 
-## Usage
+## Development
+
+### To add a new dependency:
+
+* Add the dependency to `requirements.in` or `requirements-dev.in` as appropriate.
+* Run `just pip-update`
 
 ## Deployment

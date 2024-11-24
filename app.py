@@ -11,11 +11,13 @@ import aiohttp
 from quart import Quart, jsonify, request, session
 from quart_cors import cors
 from quart_rate_limiter import RateLimiter
+from quart_schema import QuartSchema
 
 import config_helper
 import database_handler
 import utils
 from apis import api_blueprint
+from apiv2 import blueprint
 from config_helper import logger
 from core import db_pool_acquired, dbs_connected, initialize
 from environment import get_api_var
@@ -46,7 +48,9 @@ except OSError:
     username = "Unknown"
 
 app = Quart(__name__)
+QuartSchema(app, convert_casing=True)
 app.register_blueprint(api_blueprint)
+app.register_blueprint(blueprint.bp, url_prefix="/api/v2")
 rate_limiter = RateLimiter(app)
 cors(app, allow_origin="*")
 
