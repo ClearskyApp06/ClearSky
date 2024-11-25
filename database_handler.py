@@ -58,21 +58,18 @@ def get_connection_pool(db_type="read"):
     if db_type == "read":
         return next(read_db_iterator)
     elif db_type == "cursor":
-        for db, _configg in database_config.items():
-            if "cursor" in db.lower():
-                return db
+        try:
+            return next(db for db in connection_pools if "cursor" in db.lower())
+        except StopIteration:
+            logger.error("No cursor db found.")
+            return None
     else:
-        for db, _configg in database_config.items():
-            if ("clearsky_database" in db.lower() and "db" not in db.lower()) or db.lower() == "write_keyword":
-                continue
-            if database_config["write_keyword"] in db.lower() or (
-                "db" in db.lower() and database_config["write_keyword"] in db.lower()
-            ):
-                write = db
-
-                return write
-
-        logger.error("No write db found.")
+        write_keyword = database_config["write_keyword"]
+        try:
+            return next(db for db in connection_pools if write_keyword in db.lower())
+        except StopIteration:
+            logger.error("No write db found.")
+            return None
 
 
 async def create_connection_pools(database_configg):
