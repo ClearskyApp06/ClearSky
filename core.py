@@ -591,41 +591,37 @@ async def get_handle_info(client_identifier: str) -> dict[str, Any] | None:
         logger.info(f">> {session_ip} - {api_key} - handle result returned: {identifier}")
 
 
-async def get_handle_history_info(client_identifier) -> jsonify:
+async def get_handle_history_info(client_identifier: str) -> dict[str, Any] | None:
     session_ip = await get_ip()
     api_key = request.headers.get("X-API-Key")
 
     identifier = await sanitization(client_identifier)
 
     logger.info(f"<< {session_ip} - {api_key} - get handle history request: {identifier}")
+    try:
+        if identifier:
+            did_identifier, handle_identifier = await pre_process_identifier(identifier)
+            status = await preprocess_status(did_identifier)
 
-    if identifier:
-        did_identifier, handle_identifier = await pre_process_identifier(identifier)
-        status = await preprocess_status(did_identifier)
+            if did_identifier and handle_identifier and status:
+                handle_history = await utils.get_handle_history(did_identifier)
 
-        if did_identifier and handle_identifier and status:
-            handle_history = await utils.get_handle_history(did_identifier)
+                handle_history_data = {
+                    "identifier": identifier,
+                    "handle_history": handle_history,
+                }
+            else:
+                handle_history_data = None
 
-            handle_history_data = {
-                "identifier": identifier,
-                "handle_history": handle_history,
-            }
+            return handle_history_data
         else:
-            handle_history_data = None
-
-        data = {"data": handle_history_data}
-    else:
-        identifier = "Missing parameter"
-        result = "Missing parameter"
-        block_data = {"error": result}
-        data = {"data": block_data}
-
-    logger.info(f">> {session_ip} - {api_key} - handle history result returned: {identifier}")
-
-    return jsonify(data)
+            identifier = "Missing parameter"
+            raise BadRequest(identifier, identifier)
+    finally:
+        logger.info(f">> {session_ip} - {api_key} - handle history result returned: {identifier}")
 
 
-async def get_list_info(client_identifier) -> jsonify:
+async def get_list_info(client_identifier: str) -> tuple[str, dict[str, Any] | None]:
     session_ip = await get_ip()
     api_key = request.headers.get("X-API-Key")
 
@@ -633,58 +629,52 @@ async def get_list_info(client_identifier) -> jsonify:
 
     logger.info(f"<< {session_ip} - {api_key} - get mute/block list request: {identifier}")
 
-    if identifier:
-        did_identifier, handle_identifier = await pre_process_identifier(identifier)
-        status = await preprocess_status(did_identifier)
+    try:
+        if identifier:
+            did_identifier, handle_identifier = await pre_process_identifier(identifier)
+            status = await preprocess_status(did_identifier)
 
-        if did_identifier and handle_identifier and status:
-            mute_lists = await database_handler.get_mutelists(did_identifier)
+            if did_identifier and handle_identifier and status:
+                mute_lists = await database_handler.get_mutelists(did_identifier)
 
-            list_data = {"identifier": identifier, "lists": mute_lists}
+                list_data = {"identifier": identifier, "lists": mute_lists}
+            else:
+                list_data = None
+
+            return identifier, list_data
         else:
-            list_data = None
-
-        data = {"identifier": identifier, "data": list_data}
-    else:
-        identifier = "Missing parameter"
-        result = "Missing parameter"
-        block_data = {"error": result}
-        data = {"data": block_data}
-
-    logger.info(f">> {session_ip} - {api_key} - mute/block list result returned: {identifier}")
-
-    return jsonify(data)
+            identifier = "Missing parameter"
+            raise BadRequest(identifier, identifier)
+    finally:
+        logger.info(f">> {session_ip} - {api_key} - mute/block list result returned: {identifier}")
 
 
-async def get_moderation_lists(input_name, page) -> jsonify:
+async def get_moderation_lists(input_name: str, page: int) -> tuple[str, dict[str, Any]]:
     session_ip = await get_ip()
     api_key = request.headers.get("X-API-Key")
 
     logger.info(f"<< {session_ip} - {api_key} - get moderation list request: {input_name}")
 
-    if input_name:
-        items_per_page = 100
-        offset = (page - 1) * items_per_page
+    try:
+        if input_name:
+            items_per_page = 100
+            offset = (page - 1) * items_per_page
 
-        name = input_name.lower()
+            name = input_name.lower()
 
-        list_data, pages = await database_handler.get_moderation_list(name, limit=items_per_page, offset=offset)
+            list_data, pages = await database_handler.get_moderation_list(name, limit=items_per_page, offset=offset)
 
-        sub_data = {"lists": list_data, "pages": pages}
+            sub_data = {"lists": list_data, "pages": pages}
 
-        data = {"input": name, "data": sub_data}
-    else:
-        input_name = "Missing parameter"
-        result = "Missing parameter"
-        block_data = {"error": result}
-        data = {"data": block_data}
-
-    logger.info(f">> {session_ip} - {api_key} - mute/block list result returned: {input_name}")
-
-    return jsonify(data)
+            return name, sub_data
+        else:
+            input_name = "Missing parameter"
+            raise BadRequest(input_name, input_name)
+    finally:
+        logger.info(f">> {session_ip} - {api_key} - mute/block list result returned: {input_name}")
 
 
-async def get_blocked_search(client_identifier, search_identifier) -> jsonify:
+async def get_blocked_search(client_identifier: str, search_identifier: str) -> dict[str, Any] | None:
     api_key = request.headers.get("X-API-Key")
     session_ip = await get_ip()
 
@@ -694,37 +684,32 @@ async def get_blocked_search(client_identifier, search_identifier) -> jsonify:
     logger.info(
         f"<< {session_ip} - {api_key} - blocklist[blocked] search request: {client_identifier}:{search_identifier}"
     )
+    try:
+        if client_identifier and search_identifier:
+            client_is_handle = utils.is_handle(client_identifier)
+            search_is_handle = utils.is_handle(search_identifier)
 
-    if client_identifier and search_identifier:
-        client_is_handle = utils.is_handle(client_identifier)
-        search_is_handle = utils.is_handle(search_identifier)
+            if client_is_handle and search_is_handle:
+                result = await database_handler.blocklist_search(client_identifier, search_identifier, switch="blocked")
+            else:
+                result = None
 
-        if client_is_handle and search_is_handle:
-            result = await database_handler.blocklist_search(client_identifier, search_identifier, switch="blocked")
+            return result
         else:
-            result = None
-
-        block_data = result if result else None
-
-        data = {"data": block_data}
-    else:
-        if not client_identifier:
-            client_identifier = "Missing parameter"
-        if not search_identifier:
-            search_identifier = "Missing parameter"
-        result = "Missing parameter"
-        block_data = {"error": result}
-        data = {"data": block_data}
-
-    logger.info(
-        f">> {session_ip} - {api_key} - blocklist[blocked] search result returned: "
-        f"{client_identifier}:{search_identifier}"
-    )
-
-    return jsonify(data)
+            if not client_identifier:
+                client_identifier = "Missing parameter"
+            if not search_identifier:
+                search_identifier = "Missing parameter"
+            result = "Missing parameter"
+            raise BadRequest(result, result)
+    finally:
+        logger.info(
+            f">> {session_ip} - {api_key} - blocklist[blocked] search result returned: "
+            f"{client_identifier}:{search_identifier}"
+        )
 
 
-async def get_blocking_search(client_identifier, search_identifier) -> jsonify:
+async def get_blocking_search(client_identifier: str, search_identifier: str) -> dict[str, Any] | None:
     api_key = request.headers.get("X-API-Key")
     session_ip = await get_ip()
 
@@ -734,34 +719,31 @@ async def get_blocking_search(client_identifier, search_identifier) -> jsonify:
     logger.info(
         f"<< {session_ip} - {api_key} - blocklist[blocking] search request: {client_identifier}:{search_identifier}"
     )
+    try:
+        if client_identifier and search_identifier:
+            client_is_handle = utils.is_handle(client_identifier)
+            search_is_handle = utils.is_handle(search_identifier)
 
-    if client_identifier and search_identifier:
-        client_is_handle = utils.is_handle(client_identifier)
-        search_is_handle = utils.is_handle(search_identifier)
+            if client_is_handle and search_is_handle:
+                result = await database_handler.blocklist_search(
+                    client_identifier, search_identifier, switch="blocking"
+                )
+            else:
+                result = None
 
-        if client_is_handle and search_is_handle:
-            result = await database_handler.blocklist_search(client_identifier, search_identifier, switch="blocking")
+            return result if result else None
         else:
-            result = None
-
-        block_data = result if result else None
-
-        data = {"data": block_data}
-    else:
-        if not client_identifier:
-            client_identifier = "Missing parameter"
-        if not search_identifier:
-            search_identifier = "Missing parameter"
-        result = "Missing parameter"
-        block_data = {"error": result}
-        data = {"data": block_data}
-
-    logger.info(
-        f">> {session_ip} - {api_key} - blocklist[blocking] search result returned: "
-        f"{client_identifier}:{search_identifier}"
-    )
-
-    return jsonify(data)
+            if not client_identifier:
+                client_identifier = "Missing parameter"
+            if not search_identifier:
+                search_identifier = "Missing parameter"
+            result = "Missing parameter"
+            raise BadRequest(result, result)
+    finally:
+        logger.info(
+            f">> {session_ip} - {api_key} - blocklist[blocking] search result returned: "
+            f"{client_identifier}:{search_identifier}"
+        )
 
 
 async def fun_facts() -> jsonify:

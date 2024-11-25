@@ -283,7 +283,7 @@ async def auth_get_handle_info(client_identifier) -> "Response":
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
 async def auth_get_handle_history_info(client_identifier) -> "Response":
-    return await get_handle_history_info(client_identifier)
+    return jsonify({"data": await get_handle_history_info(client_identifier)})
 
 
 @api_blueprint.route("/api/v1/auth/get-list/<client_identifier>", methods=["GET"])
@@ -291,7 +291,8 @@ async def auth_get_handle_history_info(client_identifier) -> "Response":
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
 async def auth_get_list_info(client_identifier) -> "Response":
-    return await get_list_info(client_identifier)
+    identifier, list_data = await get_list_info(client_identifier)
+    return jsonify({"identifier": identifier, "data": list_data})
 
 
 @api_blueprint.route("/api/v1/auth/get-moderation-list/<string:input_name>", defaults={"page": 1}, methods=["GET"])
@@ -300,7 +301,8 @@ async def auth_get_list_info(client_identifier) -> "Response":
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
 async def auth_get_moderation_lists(input_name, page) -> "Response":
-    return await get_moderation_lists(input_name, page)
+    name, sub_data = await get_moderation_lists(input_name, page)
+    return jsonify({"input": name, "data": sub_data})
 
 
 @api_blueprint.route("/api/v1/auth/blocklist-search-blocked/<client_identifier>/<search_identifier>", methods=["GET"])
@@ -308,7 +310,7 @@ async def auth_get_moderation_lists(input_name, page) -> "Response":
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
 async def auth_get_blocked_search(client_identifier, search_identifier) -> "Response":
-    return await get_blocked_search(client_identifier, search_identifier)
+    return jsonify({"data": await get_blocked_search(client_identifier, search_identifier)})
 
 
 @api_blueprint.route("/api/v1/auth/blocklist-search-blocking/<client_identifier>/<search_identifier>", methods=["GET"])
@@ -316,7 +318,7 @@ async def auth_get_blocked_search(client_identifier, search_identifier) -> "Resp
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
 async def auth_get_blocking_search(client_identifier, search_identifier) -> "Response":
-    return await get_blocking_search(client_identifier, search_identifier)
+    return jsonify({"data": await get_blocking_search(client_identifier, search_identifier)})
 
 
 @api_blueprint.route("/api/v1/auth/lists/fun-facts", methods=["GET"])
@@ -660,14 +662,15 @@ async def anon_get_handle_info(client_identifier) -> "Response":
 @handle_errors
 @rate_limit(5, timedelta(seconds=1))
 async def anon_get_handle_history_info(client_identifier) -> "Response":
-    return await get_handle_history_info(client_identifier)
+    return jsonify({"data": await get_handle_history_info(client_identifier)})
 
 
 @api_blueprint.route("/api/v1/anon/get-list/<client_identifier>", methods=["GET"])
 @handle_errors
 @rate_limit(5, timedelta(seconds=1))
 async def anon_get_list_info(client_identifier) -> "Response":
-    return await get_list_info(client_identifier)
+    identifier, list_data = await get_list_info(client_identifier)
+    return jsonify({"identifier": identifier, "data": list_data})
 
 
 @api_blueprint.route("/api/v1/anon/get-moderation-list/<string:input_name>", defaults={"page": 1}, methods=["GET"])
@@ -675,21 +678,22 @@ async def anon_get_list_info(client_identifier) -> "Response":
 @handle_errors
 @rate_limit(5, timedelta(seconds=1))
 async def anon_get_moderation_lists(input_name, page) -> "Response":
-    return await get_moderation_lists(input_name, page)
+    name, sub_data = await get_moderation_lists(input_name, page)
+    return jsonify({"input": name, "data": sub_data})
 
 
 @api_blueprint.route("/api/v1/anon/blocklist-search-blocked/<client_identifier>/<search_identifier>", methods=["GET"])
 @handle_errors
 @rate_limit(5, timedelta(seconds=1))
 async def anon_get_blocked_search(client_identifier, search_identifier) -> "Response":
-    return await get_blocked_search(client_identifier, search_identifier)
+    return jsonify({"data": await get_blocked_search(client_identifier, search_identifier)})
 
 
 @api_blueprint.route("/api/v1/anon/blocklist-search-blocking/<client_identifier>/<search_identifier>", methods=["GET"])
 @handle_errors
 @rate_limit(5, timedelta(seconds=1))
 async def anon_get_blocking_search(client_identifier, search_identifier) -> "Response":
-    return await get_blocking_search(client_identifier, search_identifier)
+    return jsonify({"data": await get_blocking_search(client_identifier, search_identifier)})
 
 
 @api_blueprint.route("/api/v1/anon/lists/fun-facts", methods=["GET"])
