@@ -6,8 +6,10 @@ aiolimiter>=1.1.0
 quart>=0.19.9
 cachetools>=5.5.0
 redis>=5.2.0
+pydantic>2
 pytz>=2023.4
 quart_rate_limiter>=0.10.0
+quart-schema~=0.20.0
 quart_cors>=0.7.0
 aiocron>=1.8
 aiohttp>=3.11.7

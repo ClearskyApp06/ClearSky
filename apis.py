@@ -1,9 +1,13 @@
 # apis.py
 
+from collections.abc import Awaitable
 from datetime import timedelta
+from functools import wraps
+from http import HTTPStatus
+from typing import TYPE_CHECKING, ParamSpec, TypeVar
 
 from quart import Blueprint, jsonify, render_template, send_file, send_from_directory, session
-from quart_rate_limiter import rate_limit
+from quart_rate_limiter import RateLimitExceeded, rate_limit
 
 from core import (
     api_key_required,
@@ -38,10 +42,51 @@ from core import (
     time_behind,
     verify_handle,
 )
-from errors import BadRequest, DatabaseConnectionError, ExceedsFileSizeLimit, FileNameExists, NoFileProvided, NotFound
+from errors import (
+    BadRequest,
+    ClearskyException,
+    DatabaseConnectionError,
+    ExceedsFileSizeLimit,
+    FileNameExists,
+    NoFileProvided,
+    NotFound,
+    NotImplement,
+)
 from helpers import generate_session_number, get_ip
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from quart import Response
+
+P = ParamSpec("P")
+T = TypeVar("T", bound=Awaitable)
 api_blueprint = Blueprint("api", __name__)
+
+
+def handle_errors(fn: "Callable[P, T]") -> "Callable[P, T]":
+    @wraps(fn)
+    async def inner(*args: P.args, **kwargs: P.kwargs) -> T:
+        try:
+            return await fn(*args, **kwargs)
+        except ClearskyException as exc:
+            if exc.status_code // 100 == 5:
+                logger.exception("Server error")
+            response = jsonify({"error": {"data": str(exc)}})
+            response.status_code = exc.status_code
+            return response
+        except RateLimitExceeded as exc:
+            response = jsonify({"error": {"data": "Rate limit exceeded"}})
+            response.headers["Retry-After"] = exc.retry_after
+            response.status_code = HTTPStatus.TOO_MANY_REQUESTS
+            return response
+        except Exception:
+            logger.exception("Unhandled server error")
+            response = jsonify({"error": {"data": "Internal server error"}})
+            response.status_code = 500
+            return response
+
+    return inner
 
 
 # ======================================================================================================================
@@ -165,437 +210,212 @@ async def auth_get_icon():
 # ============================================= Authenticated API Endpoints ============================================
 @api_blueprint.route("/api/v1/auth/blocklist/<client_identifier>", defaults={"page": 1}, methods=["GET"])
 @api_blueprint.route("/api/v1/auth/blocklist/<client_identifier>/<int:page>", methods=["GET"])
+@handle_errors
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_get_blocklist(client_identifier, page) -> jsonify:
-    try:
-        return await get_blocklist(client_identifier, page)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_get_blocklist: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_get_blocklist(client_identifier, page) -> "Response":
+    return jsonify({"data": await get_blocklist(client_identifier, page)})
 
 
 @api_blueprint.route("/api/v1/auth/single-blocklist/<client_identifier>", defaults={"page": 1}, methods=["GET"])
 @api_blueprint.route("/api/v1/auth/single-blocklist/<client_identifier>/<int:page>", methods=["GET"])
+@handle_errors
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_get_single_blocklist(client_identifier, page) -> jsonify:
-    try:
-        return await get_single_blocklist(client_identifier, page)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_get_single_blocklist: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_get_single_blocklist(client_identifier, page) -> "Response":
+    identifier, status, blocklist_data = await get_single_blocklist(client_identifier, page)
+    return jsonify({"identifier": identifier, "status": status, "data": blocklist_data})
 
 
 @api_blueprint.route("/api/v1/auth/in-common-blocklist/<client_identifier>", methods=["GET"])
+@handle_errors
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_get_in_common_blocklist(client_identifier) -> jsonify:
-    try:
-        return await get_in_common_blocklist(client_identifier)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_get_in_common_blocklist: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_get_in_common_blocklist(client_identifier) -> "Response":
+    identifier, common_list = await get_in_common_blocklist(client_identifier)
+    return jsonify({"identity": identifier, "data": common_list})
 
 
 @api_blueprint.route("/api/v1/auth/in-common-blocked-by/<client_identifier>", methods=["GET"])
+@handle_errors
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_get_in_common_blocked_by(client_identifier) -> jsonify:
-    try:
-        return await get_in_common_blocked(client_identifier)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_get_in_common_blocked_by: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_get_in_common_blocked_by(client_identifier) -> "Response":
+    identifier, common_list = await get_in_common_blocked(client_identifier)
+    return jsonify({"identity": identifier, "data": common_list})
 
 
 @api_blueprint.route("/api/v1/auth/at-uri/<path:uri>", methods=["GET"])
+@handle_errors
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_convert_uri_to_url(uri) -> jsonify:
-    try:
-        return await convert_uri_to_url(uri)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_convert_uri_to_url: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_convert_uri_to_url(uri) -> "Response":
+    return {"data": await convert_uri_to_url(uri)}
 
 
 @api_blueprint.route("/api/v1/auth/total-users", methods=["GET"])
+@handle_errors
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_get_total_users() -> jsonify:
-    return jsonify({"error": "Not Implemented"}), 501
-    try:
-        return await get_total_users()
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_get_total_users: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_get_total_users() -> "Response":
+    raise NotImplement()
+    return jsonify({"data": await get_total_users()})
 
 
 @api_blueprint.route("/api/v1/auth/get-did/<client_identifier>", methods=["GET"])
+@handle_errors
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_get_did_info(client_identifier) -> jsonify:
-    try:
-        return await get_did_info(client_identifier)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_get_did_info: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_get_did_info(client_identifier) -> "Response":
+    return jsonify({"data": await get_did_info(client_identifier)})
 
 
 @api_blueprint.route("/api/v1/auth/get-handle/<client_identifier>", methods=["GET"])
+@handle_errors
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_get_handle_info(client_identifier) -> jsonify:
-    try:
-        return await get_handle_info(client_identifier)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_get_handle_info: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_get_handle_info(client_identifier) -> "Response":
+    return jsonify({"data": await get_handle_info(client_identifier)})
 
 
 @api_blueprint.route("/api/v1/auth/get-handle-history/<client_identifier>", methods=["GET"])
+@handle_errors
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_get_handle_history_info(client_identifier) -> jsonify:
-    try:
-        return await get_handle_history_info(client_identifier)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_get_handle_history_info: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_get_handle_history_info(client_identifier) -> "Response":
+    return jsonify({"data": await get_handle_history_info(client_identifier)})
 
 
 @api_blueprint.route("/api/v1/auth/get-list/<client_identifier>", methods=["GET"])
+@handle_errors
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_get_list_info(client_identifier) -> jsonify:
-    try:
-        return await get_list_info(client_identifier)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_get_list_info: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_get_list_info(client_identifier) -> "Response":
+    identifier, list_data = await get_list_info(client_identifier)
+    return jsonify({"identifier": identifier, "data": list_data})
 
 
 @api_blueprint.route("/api/v1/auth/get-moderation-list/<string:input_name>", defaults={"page": 1}, methods=["GET"])
 @api_blueprint.route("/api/v1/auth/get-moderation-list/<string:input_name>/<int:page>", methods=["GET"])
+@handle_errors
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_get_moderation_lists(input_name, page) -> jsonify:
-    try:
-        return await get_moderation_lists(input_name, page)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_get_moderation_lists: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_get_moderation_lists(input_name, page) -> "Response":
+    name, sub_data = await get_moderation_lists(input_name, page)
+    return jsonify({"input": name, "data": sub_data})
 
 
 @api_blueprint.route("/api/v1/auth/blocklist-search-blocked/<client_identifier>/<search_identifier>", methods=["GET"])
+@handle_errors
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_get_blocked_search(client_identifier, search_identifier) -> jsonify:
-    try:
-        return await get_blocked_search(client_identifier, search_identifier)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_get_blocked_search: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_get_blocked_search(client_identifier, search_identifier) -> "Response":
+    return jsonify({"data": await get_blocked_search(client_identifier, search_identifier)})
 
 
 @api_blueprint.route("/api/v1/auth/blocklist-search-blocking/<client_identifier>/<search_identifier>", methods=["GET"])
+@handle_errors
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_get_blocking_search(client_identifier, search_identifier) -> jsonify:
-    try:
-        return await get_blocking_search(client_identifier, search_identifier)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_get_blocking_search: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_get_blocking_search(client_identifier, search_identifier) -> "Response":
+    return jsonify({"data": await get_blocking_search(client_identifier, search_identifier)})
 
 
 @api_blueprint.route("/api/v1/auth/lists/fun-facts", methods=["GET"])
+@handle_errors
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_fun_facts() -> jsonify:
-    try:
-        return await fun_facts()
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_fun_facts: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_fun_facts() -> "Response":
+    return await fun_facts()
 
 
 @api_blueprint.route("/api/v1/auth/lists/funer-facts", methods=["GET"])
+@handle_errors
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_funer_facts() -> jsonify:
-    try:
-        return await funer_facts()
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_funer_facts: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_funer_facts() -> "Response":
+    return await funer_facts()
 
 
 @api_blueprint.route("/api/v1/auth/lists/block-stats", methods=["GET"])
+@handle_errors
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_block_stats() -> jsonify:
-    try:
-        return await block_stats()
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_block_stats: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_block_stats() -> "Response":
+    return await block_stats()
 
 
 @api_blueprint.route("/api/v1/auth/base/autocomplete/<client_identifier>", methods=["GET"])
+@handle_errors
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_autocomplete(client_identifier) -> jsonify:
-    try:
-        return await autocomplete(client_identifier)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_autocomplete: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_autocomplete(client_identifier) -> "Response":
+    return await autocomplete(client_identifier)
 
 
 @api_blueprint.route("/api/v1/auth/base/internal/status/process-status", methods=["GET"])
+@handle_errors
 @api_key_required("INTERNALSERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_get_internal_status() -> jsonify:
-    try:
-        return await get_internal_status()
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_get_internal_status: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_get_internal_status() -> "Response":
+    return await get_internal_status()
 
 
 @api_blueprint.route("/api/v1/auth/base/internal/api-check", methods=["GET"])
+@handle_errors
 @api_key_required("INTERNALSERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_check_api_keys() -> jsonify:
-    try:
-        return await check_api_keys()
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_check_api_keys: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_check_api_keys() -> "Response":
+    return await check_api_keys()
 
 
 @api_blueprint.route("/api/v1/auth/lists/dids-per-pds", methods=["GET"])
+@handle_errors
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_dids_per_pds() -> jsonify:
-    try:
-        return await retrieve_dids_per_pds()
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_dids_per_pds: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_dids_per_pds() -> "Response":
+    return await retrieve_dids_per_pds()
 
 
 @api_blueprint.route(
     "/api/v1/auth/subscribe-blocks-blocklist/<client_identifier>", defaults={"page": 1}, methods=["GET"]
 )
 @api_blueprint.route("/api/v1/auth/subscribe-blocks-blocklist/<client_identifier>/<int:page>", methods=["GET"])
+@handle_errors
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_subscribe_blocks_blocklist(client_identifier, page) -> jsonify:
-    try:
-        return await retrieve_subscribe_blocks_blocklist(client_identifier, page)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_subscribe_blocks_blocklist: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_subscribe_blocks_blocklist(client_identifier, page) -> "Response":
+    return await retrieve_subscribe_blocks_blocklist(client_identifier, page)
 
 
 @api_blueprint.route(
     "/api/v1/auth/subscribe-blocks-single-blocklist/<client_identifier>", defaults={"page": 1}, methods=["GET"]
 )
 @api_blueprint.route("/api/v1/auth/subscribe-blocks-single-blocklist/<client_identifier>/<int:page>", methods=["GET"])
+@handle_errors
 @api_key_required("SERVER")
 @rate_limit(30, timedelta(seconds=1))
-async def auth_subscribe_blocks_single_blocklist(client_identifier, page) -> jsonify:
-    try:
-        return await retrieve_subscribe_blocks_single_blocklist(client_identifier, page)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_subscribe_blocks_single_blocklist: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_subscribe_blocks_single_blocklist(client_identifier, page) -> "Response":
+    return await retrieve_subscribe_blocks_single_blocklist(client_identifier, page)
 
 
 @api_blueprint.route("/api/v1/auth/validation/validate-handle/<client_identifier>", methods=["GET"])
+@handle_errors
 @rate_limit(30, timedelta(seconds=1))
-async def auth_validate_handle(client_identifier) -> jsonify:
-    try:
-        return await verify_handle(client_identifier)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in auth_validate_handle: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def auth_validate_handle(client_identifier) -> "Response":
+    return await verify_handle(client_identifier)
 
 
 @api_blueprint.route("/api/v1/auth/data-transaction/receive", methods=["POST"])
+@handle_errors
 @rate_limit(1, timedelta(seconds=2))
-async def auth_receive_data() -> jsonify:
+async def auth_receive_data() -> "Response":
     session_ip = await get_ip()
     api_key = request.headers.get("X-API-Key")
 
     logger.info(f"data list file upload request: {session_ip} - {api_key}")
 
-    return jsonify({"error": "Not Implemented"}), 501
-
+    raise NotImplement()
     try:
         file_name = await request.form
         file_name = file_name.get("filename")
@@ -678,8 +498,10 @@ async def auth_receive_data() -> jsonify:
 
 
 @api_blueprint.route("/api/v1/auth/data-transaction/retrieve", methods=["GET"])
+@handle_errors
 @rate_limit(1, timedelta(seconds=2))
-async def auth_retrieve_data() -> jsonify:
+async def auth_retrieve_data() -> "Response":
+    raise NotImplement()
     session_ip = await get_ip()
     api_key = request.headers.get("X-API-Key")
 
@@ -718,8 +540,10 @@ async def auth_retrieve_data() -> jsonify:
 
 
 @api_blueprint.route("/api/v1/auth/data-transaction/query", methods=["GET"])
+@handle_errors
 @rate_limit(1, timedelta(seconds=2))
-async def auth_query_data() -> jsonify:
+async def auth_query_data() -> "Response":
+    raise NotImplement()
     session_ip = await get_ip()
     api_key = request.headers.get("X-API-Key")
 
@@ -748,120 +572,64 @@ async def auth_query_data() -> jsonify:
 
 
 @api_blueprint.route("/api/v1/auth/status/time-behind", methods=["GET"])
+@handle_errors
 @rate_limit(30, timedelta(seconds=2))
-async def auth_time_behind() -> jsonify:
+async def auth_time_behind() -> "Response":
     session_ip = await get_ip()
     api_key = request.headers.get("X-API-Key")
 
     logger.info(f"time behind request: {session_ip} - {api_key}")
 
-    try:
-        return await time_behind()
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in time_behind: {e}")
-        return jsonify({"error": "Internal error"}), 500
+    return await time_behind()
 
 
 # ======================================================================================================================
 # ========================================== Unauthenticated API Endpoints =============================================
 @api_blueprint.route("/api/v1/anon/blocklist/<client_identifier>", defaults={"page": 1}, methods=["GET"])
 @api_blueprint.route("/api/v1/anon/blocklist/<client_identifier>/<int:page>", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_get_blocklist(client_identifier, page) -> jsonify:
-    try:
-        return await get_blocklist(client_identifier, page)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_get_blocklist: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_get_blocklist(client_identifier, page) -> "Response":
+    return jsonify({"data": await get_blocklist(client_identifier, page)})
 
 
 @api_blueprint.route("/api/v1/anon/single-blocklist/<client_identifier>", defaults={"page": 1}, methods=["GET"])
 @api_blueprint.route("/api/v1/anon/single-blocklist/<client_identifier>/<int:page>", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_get_single_blocklist(client_identifier, page) -> jsonify:
-    try:
-        return await get_single_blocklist(client_identifier, page)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_get_single_blocklist: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_get_single_blocklist(client_identifier, page) -> "Response":
+    identifier, status, blocklist_data = await get_single_blocklist(client_identifier, page)
+    return jsonify({"identifier": identifier, "status": status, "data": blocklist_data})
 
 
 @api_blueprint.route("/api/v1/anon/in-common-blocklist/<client_identifier>", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_get_in_common_blocklist(client_identifier) -> jsonify:
-    try:
-        return await get_in_common_blocklist(client_identifier)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_get_in_common_blocklist: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_get_in_common_blocklist(client_identifier) -> "Response":
+    identifier, common_list = await get_in_common_blocklist(client_identifier)
+    return jsonify({"identity": identifier, "data": common_list})
 
 
 @api_blueprint.route("/api/v1/anon/in-common-blocked-by/<client_identifier>", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_get_in_common_blocked_by(client_identifier) -> jsonify:
-    try:
-        return await get_in_common_blocked(client_identifier)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_get_in_common_blocked_by: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_get_in_common_blocked_by(client_identifier) -> "Response":
+    identifier, common_list = await get_in_common_blocked(client_identifier)
+    return jsonify({"identity": identifier, "data": common_list})
 
 
 @api_blueprint.route("/api/v1/anon/at-uri/<path:uri>", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_convert_uri_to_url(uri) -> jsonify:
-    try:
-        return await convert_uri_to_url(uri)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_convert_uri_to_url: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_convert_uri_to_url(uri) -> "Response":
+    return {"data": await convert_uri_to_url(uri)}
 
 
 @api_blueprint.route("/api/v1/anon/total-users", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_get_total_users() -> jsonify:
-    return jsonify({"error": "Not Implemented"}), 501
+async def anon_get_total_users() -> "Response":
+    raise NotImplement()
     try:
         return await get_total_users()
     except DatabaseConnectionError:
@@ -877,293 +645,135 @@ async def anon_get_total_users() -> jsonify:
 
 
 @api_blueprint.route("/api/v1/anon/get-did/<client_identifier>", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_get_did_info(client_identifier) -> jsonify:
-    try:
-        return await get_did_info(client_identifier)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_get_did_info: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_get_did_info(client_identifier) -> "Response":
+    return jsonify({"data": await get_did_info(client_identifier)})
 
 
 @api_blueprint.route("/api/v1/anon/get-handle/<client_identifier>", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_get_handle_info(client_identifier) -> jsonify:
-    try:
-        return await get_handle_info(client_identifier)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_get_handle_info: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_get_handle_info(client_identifier) -> "Response":
+    return jsonify({"data": await get_handle_info(client_identifier)})
 
 
 @api_blueprint.route("/api/v1/anon/get-handle-history/<client_identifier>", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_get_handle_history_info(client_identifier) -> jsonify:
-    try:
-        return await get_handle_history_info(client_identifier)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_get_handle_history_info: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_get_handle_history_info(client_identifier) -> "Response":
+    return jsonify({"data": await get_handle_history_info(client_identifier)})
 
 
 @api_blueprint.route("/api/v1/anon/get-list/<client_identifier>", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_get_list_info(client_identifier) -> jsonify:
-    try:
-        return await get_list_info(client_identifier)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_get_list_info: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_get_list_info(client_identifier) -> "Response":
+    identifier, list_data = await get_list_info(client_identifier)
+    return jsonify({"identifier": identifier, "data": list_data})
 
 
 @api_blueprint.route("/api/v1/anon/get-moderation-list/<string:input_name>", defaults={"page": 1}, methods=["GET"])
 @api_blueprint.route("/api/v1/anon/get-moderation-list/<string:input_name>/<int:page>", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_get_moderation_lists(input_name, page) -> jsonify:
-    try:
-        return await get_moderation_lists(input_name, page)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_get_moderation_lists: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_get_moderation_lists(input_name, page) -> "Response":
+    name, sub_data = await get_moderation_lists(input_name, page)
+    return jsonify({"input": name, "data": sub_data})
 
 
 @api_blueprint.route("/api/v1/anon/blocklist-search-blocked/<client_identifier>/<search_identifier>", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_get_blocked_search(client_identifier, search_identifier) -> jsonify:
-    try:
-        return await get_blocked_search(client_identifier, search_identifier)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_get_blocked_search: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_get_blocked_search(client_identifier, search_identifier) -> "Response":
+    return jsonify({"data": await get_blocked_search(client_identifier, search_identifier)})
 
 
 @api_blueprint.route("/api/v1/anon/blocklist-search-blocking/<client_identifier>/<search_identifier>", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_get_blocking_search(client_identifier, search_identifier) -> jsonify:
-    try:
-        return await get_blocking_search(client_identifier, search_identifier)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_get_blocking_search: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_get_blocking_search(client_identifier, search_identifier) -> "Response":
+    return jsonify({"data": await get_blocking_search(client_identifier, search_identifier)})
 
 
 @api_blueprint.route("/api/v1/anon/lists/fun-facts", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_fun_facts() -> jsonify:
-    try:
-        return await fun_facts()
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_fun_facts: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_fun_facts() -> "Response":
+    return await fun_facts()
 
 
 @api_blueprint.route("/api/v1/anon/lists/funer-facts", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_funer_facts() -> jsonify:
-    try:
-        return await funer_facts()
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_funer_facts: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_funer_facts() -> "Response":
+    return await funer_facts()
 
 
 @api_blueprint.route("/api/v1/anon/lists/block-stats", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_block_stats() -> jsonify:
-    try:
-        return await block_stats()
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_block_stats: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_block_stats() -> "Response":
+    return await block_stats()
 
 
 @api_blueprint.route("/api/v1/anon/base/autocomplete/<client_identifier>", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_autocomplete(client_identifier) -> jsonify:
-    try:
-        return await autocomplete(client_identifier)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_autocomplete: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_autocomplete(client_identifier) -> "Response":
+    return await autocomplete(client_identifier)
 
 
 @api_blueprint.route("/api/v1/anon/base/internal/status/process-status", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_get_internal_status() -> jsonify:
-    try:
-        return await get_internal_status()
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_get_internal_status: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_get_internal_status() -> "Response":
+    return await get_internal_status()
 
 
 @api_blueprint.route("/api/v1/anon/lists/dids-per-pds", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_dids_per_pds() -> jsonify:
-    try:
-        return await retrieve_dids_per_pds()
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_dids_per_pds: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_dids_per_pds() -> "Response":
+    return await retrieve_dids_per_pds()
 
 
 @api_blueprint.route(
     "/api/v1/anon/subscribe-blocks-blocklist/<client_identifier>", defaults={"page": 1}, methods=["GET"]
 )
 @api_blueprint.route("/api/v1/anon/subscribe-blocks-blocklist/<client_identifier>/<int:page>", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_subscribe_blocks_blocklist(client_identifier: str, page: int) -> jsonify:
-    try:
-        return await retrieve_subscribe_blocks_blocklist(client_identifier, page)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_subscribe_blocks_blocklist: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_subscribe_blocks_blocklist(client_identifier: str, page: int) -> "Response":
+    return await retrieve_subscribe_blocks_blocklist(client_identifier, page)
 
 
 @api_blueprint.route(
     "/api/v1/anon/subscribe-blocks-single-blocklist/<client_identifier>", defaults={"page": 1}, methods=["GET"]
 )
 @api_blueprint.route("/api/v1/anon/subscribe-blocks-single-blocklist/<client_identifier>/<int:page>", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_subscribe_blocks_single_blocklist(client_identifier, page) -> jsonify:
-    try:
-        return await retrieve_subscribe_blocks_single_blocklist(client_identifier, page)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_subscribe_blocks_single_blocklist: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_subscribe_blocks_single_blocklist(client_identifier, page) -> "Response":
+    return await retrieve_subscribe_blocks_single_blocklist(client_identifier, page)
 
 
 @api_blueprint.route("/api/v1/anon/validation/validate-handle/<client_identifier>", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=1))
-async def anon_validate_handle(client_identifier) -> jsonify:
-    try:
-        return await verify_handle(client_identifier)
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in anon_validate_handle: {e}")
-        return jsonify({"error": "Internal error"}), 500
+async def anon_validate_handle(client_identifier) -> "Response":
+    return await verify_handle(client_identifier)
 
 
 @api_blueprint.route("/api/v1/anon/data-transaction/receive", methods=["POST"])
+@handle_errors
 @rate_limit(1, timedelta(seconds=2))
-async def anon_receive_data() -> jsonify:
+async def anon_receive_data() -> "Response":
     session_ip = await get_ip()
     api_key = request.headers.get("X-API-Key")
 
     logger.info(f"data list file upload request: {session_ip} - {api_key}")
-
-    return jsonify({"error": "Not Implemented"}), 501
+    raise NotImplement()
 
     try:
         file_name = await request.form
@@ -1247,14 +857,15 @@ async def anon_receive_data() -> jsonify:
 
 
 @api_blueprint.route("/api/v1/anon/data-transaction/retrieve", methods=["GET"])
+@handle_errors
 @rate_limit(1, timedelta(seconds=2))
-async def anon_retrieve_data() -> jsonify:
+async def anon_retrieve_data() -> "Response":
     session_ip = await get_ip()
     api_key = request.headers.get("X-API-Key")
 
     logger.info(f"data list file request: {session_ip} - {api_key}")
 
-    return jsonify({"error": "Not Implemented"}), 501
+    raise NotImplement()
 
     try:
         retrieve_lists = request.args.get("retrieveLists")
@@ -1287,15 +898,15 @@ async def anon_retrieve_data() -> jsonify:
 
 
 @api_blueprint.route("/api/v1/anon/data-transaction/query", methods=["GET"])
+@handle_errors
 @rate_limit(1, timedelta(seconds=2))
-async def anon_query_data() -> jsonify:
+async def anon_query_data() -> "Response":
     session_ip = await get_ip()
     api_key = request.headers.get("X-API-Key")
 
     logger.info(f"data list query request: {session_ip} - {api_key}")
 
-    return jsonify({"error": "Not Implemented"}), 501
-
+    raise NotImplement()
     try:
         get_list = request.args.get("list")
     except AttributeError:
@@ -1317,48 +928,24 @@ async def anon_query_data() -> jsonify:
 
 
 @api_blueprint.route("/api/v1/anon/cursor-recall/status", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=2))
-async def anon_cursor_recall() -> jsonify:
+async def anon_cursor_recall() -> "Response":
     session_ip = await get_ip()
     api_key = request.headers.get("X-API-Key")
 
     logger.info(f"cursor recall request: {session_ip} - {api_key}")
 
-    try:
-        return await cursor_recall_status()
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in cursor_recall_status: {e}")
-        return jsonify({"error": "Internal error"})
+    return await cursor_recall_status()
 
 
 @api_blueprint.route("/api/v1/anon/status/time-behind", methods=["GET"])
+@handle_errors
 @rate_limit(5, timedelta(seconds=2))
-async def anon_time_behind() -> jsonify:
+async def anon_time_behind() -> "Response":
     session_ip = await get_ip()
     api_key = request.headers.get("X-API-Key")
 
     logger.info(f"time behind request: {session_ip} - {api_key}")
 
-    try:
-        return await time_behind()
-    except DatabaseConnectionError:
-        logger.error("Database connection error")
-        return jsonify({"error": "Connection error"}), 503
-    except BadRequest:
-        return jsonify({"error": "Invalid request"}), 400
-    except NotFound:
-        return jsonify({"error": "Not found"}), 404
-    except Exception as e:
-        logger.error(f"Error in time_behind: {e}")
-        return jsonify({"error": "Internal error"}), 500
-
-
-# ======================================================================================================================
-# ===================================================== V2 =============================================================
+    return await time_behind()
