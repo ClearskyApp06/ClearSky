@@ -1,6 +1,7 @@
 # on_wire.py
 
 import asyncio
+import json
 import urllib.parse
 
 import dns.resolver
@@ -74,6 +75,17 @@ async def resolve_did(did, did_web_pds=False) -> list | None:  # Take DID and ge
         logger.info("Resolving did:web")
         short_did = did[len("did:web:") :]
         url = f"https://{urllib.parse.unquote(short_did)}/.well-known/did.json"
+    elif "did:tdw" in did:
+        logger.info("Resolving did:tdw")
+        short_did = did[len("did:tdw:") :]
+        url = f"https://{urllib.parse.unquote(short_did)}/.well-known/did.jsonl"
+    elif "did:dht" in did:
+        logger.info("Resolving did:dht")
+        short_did = did[len("did:dht:") :]
+        url = f"https://{urllib.parse.unquote(short_did)}/.well-known/did.json"
+    elif "did:plc" in did:
+        logger.info("Resolving did:plc")
+        url = f"{base_url}{did}"
 
     logger.debug(url)
 
@@ -93,34 +105,28 @@ async def resolve_did(did, did_web_pds=False) -> list | None:  # Take DID and ge
                 logger.debug("response: " + str(response_json))
 
                 if response.status_code == 200:
-                    if "did:web" in did:
-                        try:
-                            record = response_json["alsoKnownAs"]
-                        except Exception as e:
-                            logger.error(f"Error getting did:web handle: {e} | did: {did} | {url}")
-
-                            record = None
-                    else:
+                    if "did:web" in did or "did:dht" in did:
+                        response_json = response.json()
+                        record = response_json.get("alsoKnownAs", "")
+                    elif "did:tdw" in did:
+                        response_json = response.text.splitlines()
+                        record = [json.loads(entry)["state"]["alsoKnownAs"] for entry in response_json]
+                    elif "did:plc" in did:
+                        response_json = response.json()
                         record = response_json.get("alsoKnownAs", "")
 
                     for i in record:
-                        # record = str(record)
                         stripped_record.append(i.replace("at://", ""))
-                        # stripped_record = stripped_record.strip("[]").replace("'", "")
 
                     if did_web_pds:
                         logger.info(f"Getting PDS for {did}")
-
-                        try:
-                            endpoint = response_json["service"][0]["serviceEndpoint"]
-
-                            logger.info(f"Endpoint retrieved for {did}: {endpoint}")
-
-                            return endpoint
-                        except Exception as e:
-                            logger.error(f"Error getting did:web PDS: {e} | did: {did} | PDS: {endpoint} | {url}")
-
-                            return None
+                        endpoint = (
+                            response_json["service"][0]["serviceEndpoint"]
+                            if "did:web" in did or "did:dht" in did
+                            else response_json[-1]["service"][0]["serviceEndpoint"]
+                        )
+                        logger.info(f"Endpoint retrieved for {did}: {endpoint}")
+                        return endpoint
 
                     if "RateLimit Exceeded" in stripped_record:
                         retry_count += 1
@@ -152,9 +158,6 @@ async def resolve_did(did, did_web_pds=False) -> list | None:  # Take DID and ge
 
                         return None
                     else:
-                        # logger.warning(error_message)
-                        # await database_handler.deactivate_user(did)
-
                         return None
                 elif response.status_code == 523:
                     logger.warning("Origin is unreachable")
@@ -343,11 +346,9 @@ async def verify_handle(identity) -> bool:
     handle3 = None
 
     at_proto_lookup = "_atproto."
-
     lookup = f"{at_proto_lookup}{identity}"
 
     at_proto_result = await resolve_handle_wellknown_atproto(identity)
-
     bsky_result = await resolve_handle(identity)
 
     try:
@@ -364,58 +365,37 @@ async def verify_handle(identity) -> bool:
             dns_result = None
     except Exception as e:
         logger.error(f"Error resolving DNS: {e}")
-
         dns_result = None
 
-    if (
-        (at_proto_result is not None and "did:plc" in at_proto_result)
-        or (bsky_result is not None and "did:plc" in bsky_result)
-        or (dns_result is not None and "did:plc" in dns_result)
-    ):
+    if any("did:plc" in res for res in [at_proto_result, bsky_result, dns_result]):
         if "bsky.social" in identity:
-            if at_proto_result and bsky_result:
-                return at_proto_result == bsky_result
+            return at_proto_result == bsky_result
         else:
-            if dns_result and bsky_result:
-                return dns_result == bsky_result
-            elif bsky_result and at_proto_result:
-                return bsky_result == at_proto_result
-            else:
-                logger.error(
-                    f"validity case didn't match for {identity} | at_proto: {at_proto_result} | "
-                    f"bsky: {bsky_result} | dns: {dns_result}"
-                )
+            return dns_result == bsky_result or bsky_result == at_proto_result
+    elif any("did:web" in res for res in [at_proto_result, bsky_result, dns_result]):
+        handle1 = await resolve_did(at_proto_result) if "did:web" in at_proto_result else None
+        handle2 = await resolve_did(bsky_result) if "did:web" in bsky_result else None
+        handle3 = await resolve_did(dns_result) if "did:web" in dns_result else None
+    elif any("did:tdw" in res for res in [at_proto_result, bsky_result, dns_result]):
+        handle1 = await resolve_did(at_proto_result) if "did:tdw" in at_proto_result else None
+        handle2 = await resolve_did(bsky_result) if "did:tdw" in bsky_result else None
+        handle3 = await resolve_did(dns_result) if "did:tdw" in dns_result else None
+    elif any("did:dht" in res for res in [at_proto_result, bsky_result, dns_result]):
+        handle1 = await resolve_did(at_proto_result) if "did:dht" in at_proto_result else None
+        handle2 = await resolve_did(bsky_result) if "did:dht" in bsky_result else None
+        handle3 = await resolve_did(dns_result) if "did:dht" in dns_result else None
 
-                return False
-    elif (
-        (at_proto_result is not None and "did:web" in at_proto_result)
-        or (bsky_result is not None and "did:web" in bsky_result)
-        or (dns_result is not None and "did:web" in dns_result)
-    ):
-        if at_proto_result is not None and "did:web" in at_proto_result:
-            handle1 = await resolve_did(at_proto_result)
-        elif bsky_result is not None and "did:web" in bsky_result:
-            handle2 = await resolve_did(bsky_result)
-        elif dns_result is not None and "did:web" in dns_result:
-            handle3 = await resolve_did(dns_result)
+    handle1 = handle1[0] if handle1 else None
+    handle2 = handle2[0] if handle2 else None
+    handle3 = handle3[0] if handle3 else None
 
-        handle1 = handle1[0] if handle1 else None
-        handle2 = handle2[0] if handle2 else None
-        handle3 = handle3[0] if handle3 else None
-
-        if identity in (handle1, handle2, handle3):
-            if dns_result and bsky_result:
-                return dns_result == bsky_result
-            elif bsky_result and at_proto_result:
-                return bsky_result == at_proto_result
-            else:
-                logger.error(
-                    f"validity case didn't match for {identity} | at_proto: {at_proto_result} | "
-                    f"bsky: {bsky_result} | dns: {dns_result}"
-                )
-
-                return False
+    if identity in (handle1, handle2, handle3):
+        return dns_result == bsky_result or bsky_result == at_proto_result
     else:
+        logger.error(
+            f"validity case didn't match for {identity} | at_proto: {at_proto_result} | "
+            f"bsky: {bsky_result} | dns: {dns_result}"
+        )
         return False
 
 
